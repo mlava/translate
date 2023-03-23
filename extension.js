@@ -20,29 +20,20 @@ export default {
     onload: ({ extensionAPI }) => {
         extensionAPI.settings.panel.create(config);
 
-        window.roamAlphaAPI.ui.commandPalette.addCommand({
+        extensionAPI.ui.commandPalette.addCommand({
             label: "Translate using Deep Translate (Current block)",
             callback: () => getTrans({ extensionAPI }, true, false)
         });
-        window.roamAlphaAPI.ui.commandPalette.addCommand({
+        extensionAPI.ui.commandPalette.addCommand({
             label: "Translate using Deep Translate (All Child blocks, Same language)",
             callback: () => getTrans({ extensionAPI }, false, true)
         });
-        window.roamAlphaAPI.ui.commandPalette.addCommand({
+        extensionAPI.ui.commandPalette.addCommand({
             label: "Translate using Deep Translate (All Child blocks, Multiple languages)",
             callback: () => getTrans({ extensionAPI }, false, false)
         });
     },
     onunload: () => {
-        window.roamAlphaAPI.ui.commandPalette.removeCommand({
-            label: 'Translate using Deep Translate (Current block)'
-        });
-        window.roamAlphaAPI.ui.commandPalette.removeCommand({
-            label: 'Translate using Deep Translate (All Child blocks, Same language)'
-        });
-        window.roamAlphaAPI.ui.commandPalette.removeCommand({
-            label: 'Translate using Deep Translate (All Child blocks, Multiple languages)'
-        });
     }
 }
 
