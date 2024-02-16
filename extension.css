@@ -1,0 +1,53 @@
+.translate-toast label.iziToast-inputs-child,
+.iziToast > .iziToast-body .iziToast-inputs > select {
+  font-size: 90%;
+  font-weight: 100;
+  color: #ffffffb3 !important;
+}
+.translate-toast label.iziToast-inputs-child {
+  margin: 5px 5px 5px 3px;
+}
+
+
+.translate-toast
+  > .iziToast > .iziToast-body .iziToast-title {
+  padding: 0;
+  margin: 0;
+  line-height: 16px;
+  font-size: 14px;
+  text-align: left;
+  float: left;
+  color: red;
+  white-space: normal;
+}
+
+.translate-toast
+  > .iziToast-body
+  .iziToast-inputs
+  > input:not([type="checkbox"]):not([type="radio"]) {
+  margin-top: 5px;
+  margin-bottom: 5px;
+}
+
+.translate-toast .iziToast-body code {
+  font-size: 12px;
+}
+
+.translate-toast input[type="checkbox"].iziToast-inputs-child {
+  margin: 0 10px 0 0;
+  padding-top: 5px;
+  min-width: 10px !important;
+  /* min-height: 10px !important; */
+  position: relative;
+  top: 3px !important;
+  filter: brightness(85%);
+}
+
+.translate-toast .iziToast-inputs-child > option {
+  background: #262626ff;
+  color: #ffffffb3;
+}
+
+.translate-toast .iziToast-message {
+  padding: 5px 0 5px 0 !important;
+}
