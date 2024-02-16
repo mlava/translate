@@ -1,6 +1,7 @@
 If you've ever wanted to translate blocks of text within your Roam Research graph, this extension makes it possible. The extension will check determine the language of the text and then translate it from that language to your preferred language (set in Roam Depot settings).
 
 **New:**
+- updated config settings to allow the extension to prompt for the source language. The API is now charging for language detection, and some users may wish to remain on the free version.
 - compatible with Roam Research Hotkeys
 
 The translation will be placed in a newly created child block to the source.
