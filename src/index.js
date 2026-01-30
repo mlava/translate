@@ -5,9 +5,9 @@ const DEFAULT_BASE_DELAY_MS = 500;
 
 function buildHeaders(rAPIkey) {
     const headers = new Headers();
-    headers.set("X-RapidAPI-Key", rAPIkey);
-    headers.set("X-RapidAPI-Host", "deep-translate1.p.rapidapi.com");
-    headers.set("Content-Type", "text/plain");
+    headers.set("x-rapidapi-key", rAPIkey);
+    headers.set("x-rapidapi-host", "deep-translate1.p.rapidapi.com");
+    headers.set("Content-Type", "application/json");
     return headers;
 }
 
@@ -56,7 +56,7 @@ async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDel
                 return response;
             }
             const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * baseDelayMs);
-            console.info("retrying request", { url, status: response.status, attempt: attempt + 1, delayMs: delay });
+            console.warn("retrying request", { url, status: response.status, attempt: attempt + 1, delayMs: delay });
             await sleep(delay);
             attempt += 1;
         } catch (err) {
@@ -64,7 +64,7 @@ async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDel
                 throw err;
             }
             const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * baseDelayMs);
-            console.info("retrying request after network error", { url, attempt: attempt + 1, delayMs: delay });
+            console.warn("retrying request after network error", { url, attempt: attempt + 1, delayMs: delay });
             await sleep(delay);
             attempt += 1;
         }
@@ -169,13 +169,14 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
 
             if (promptSource == true) {
                 sourceLanguage = await prompt();
-                if (sourceLanguage == "null") {
+                if (!sourceLanguage || sourceLanguage.trim() === "" || sourceLanguage == "null") {
                     await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                 } else {
+                    sourceLanguage = sourceLanguage.trim();
                     await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                 }
             } else {
-                var raw = "{\"q\": \"" + protectedText.text + "\"}";
+                var raw = JSON.stringify({ q: protectedText.text });
                 var requestOptions = {
                     method: 'POST',
                     headers,
@@ -183,7 +184,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                     redirect: 'follow'
                 };
 
-                fetchWithRetry("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
+                await fetchWithRetry("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
                     .then(response => {
                         if (!response.ok) {
                             throw new Error(`Detect failed: HTTP ${response.status}`);
@@ -230,13 +231,14 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
 
                             if (promptSource == true) {
                                 sourceLanguage = await prompt();
-                                if (sourceLanguage == "null") {
+                                if (!sourceLanguage || sourceLanguage.trim() === "" || sourceLanguage == "null") {
                                     await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                                 } else {
+                                    sourceLanguage = sourceLanguage.trim();
                                     await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                                 }
                             } else {
-                                var raw = "{\"q\": \"" + protectedText.text + "\"}";
+                                var raw = JSON.stringify({ q: protectedText.text });
                                 var requestOptions = {
                                     method: 'POST',
                                     headers,
@@ -261,9 +263,14 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                                     })
                                     .catch(async error => {
                                         await setErrorBlock(thisBlock, error?.message || "Detect failed");
+                                        sourceLanguage = null;
                                     });
                             }
                         } else {
+                            if (!sourceLanguage) {
+                                await setErrorBlock(thisBlock, "Detect failed: no source language");
+                                continue;
+                            }
                             await window.roamAlphaAPI.createBlock({
                                 location: { "parent-uid": searchBlock, order: 1 },
                                 block: { string: "translating text...".toString(), uid: thisBlock }
@@ -271,20 +278,21 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                             await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                         }
                     } else { // run detect on every child block
-                        window.roamAlphaAPI.createBlock({
+                        await window.roamAlphaAPI.createBlock({
                             location: { "parent-uid": searchBlock, order: 1 },
                             block: { string: "detecting language...".toString(), uid: thisBlock }
                         });
 
                         if (promptSource == true) {
                             sourceLanguage = await prompt();
-                            if (sourceLanguage == "null") {
+                            if (!sourceLanguage || sourceLanguage.trim() === "" || sourceLanguage == "null") {
                                 await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                             } else {
+                                sourceLanguage = sourceLanguage.trim();
                                 await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                             }
                         } else {
-                            var raw = "{\"q\": \"" + protectedText.text + "\"}";
+                            var raw = JSON.stringify({ q: protectedText.text });
                             var requestOptions = {
                                 method: 'POST',
                                 headers,
@@ -322,7 +330,7 @@ async function getTranslation(language, uid, searchString, targetLanguage, heade
     await window.roamAlphaAPI.updateBlock(
         { block: { uid: uid, string: "translating text from __" + language + "__", open: true } });
 
-    var rawText = "{\"q\": \"" + searchString + "\", \"source\":\"" + language + "\",\"target\":\"" + targetLanguage + "\"}";
+    var rawText = JSON.stringify({ q: searchString, source: language, target: targetLanguage });
     var requestOptions1 = {
         method: 'POST',
         headers,
@@ -343,9 +351,7 @@ async function getTranslation(language, uid, searchString, targetLanguage, heade
                 window.roamAlphaAPI.updateBlock(
                     { block: { uid: uid, string: translated, open: true } });
             } else {
-                alert("Too many api calls");
-                window.roamAlphaAPI.deleteBlock(
-                    { block: { uid: uid } });
+                return setErrorBlock(uid, "Too many api calls");
             }
         })
         .catch(async error => {
