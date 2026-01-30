@@ -11,6 +11,7 @@ https://www.loom.com/share/2166ef87a8464af9b48deba226ed3d00
 - Optional prompt to choose the source language.
 - Compatible with Roam Research hotkeys and command palette.
 - Built-in retry/backoff for transient API failures (429/502/503/504).
+- Preserves Roam/Markdown syntax by protecting links, refs, and code during translation.
 
 ### Commands
 - **Translate using Deep Translate (Current block)**
@@ -29,6 +30,7 @@ https://www.loom.com/share/2166ef87a8464af9b48deba226ed3d00
 - Current block: detect (or prompt) -> translate -> write child block.
 - Child blocks (same language): detect once on the first child, reuse for all.
 - Child blocks (multiple languages): detect per child, then translate.
+ - Markup-safe translation: Roam refs, markdown links, block refs, and code are kept intact.
 
 ### Rate limits and retries
 - The Basic plan shows hard limits and ~1000 requests/hour. This extension retries only on transient failures (429/502/503/504) with short exponential backoff. Auth or quota errors (401/403) are not retried.

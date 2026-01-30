@@ -15,6 +15,38 @@ function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function protectMarkup(input) {
+    const map = [];
+    const toToken = (match) => {
+        const token = `__DTPLACEHOLDER_${map.length}__`;
+        map.push(match);
+        return token;
+    };
+    let text = input;
+    const patterns = [
+        /```[\s\S]*?```/g, // fenced code blocks
+        /`[^`]*`/g, // inline code
+        /\(\([^)]+\)\)/g, // Roam block refs
+        /\[\[[^\]]+\]\]/g, // Roam page refs
+        /\{\{[^}]+\}\}/g, // Roam components
+        /\[([^\]]+)\]\(([^)]+)\)/g, // markdown links
+        /https?:\/\/[^\s)]+/g // raw URLs
+    ];
+    for (const pattern of patterns) {
+        text = text.replace(pattern, toToken);
+    }
+    return { text, map };
+}
+
+function restoreMarkup(input, map) {
+    let text = input;
+    for (let i = 0; i < map.length; i++) {
+        const token = `__DTPLACEHOLDER_${i}__`;
+        text = text.split(token).join(map[i]);
+    }
+    return text;
+}
+
 async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDelayMs = DEFAULT_BASE_DELAY_MS } = {}) {
     let attempt = 0;
     while (true) {
@@ -128,6 +160,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
             var searchBlockInfo = await window.roamAlphaAPI.q(q);
             var searchString = searchBlockInfo[0][0].string;
             searchString = searchString.replace(/[\r\n]/gm, '');
+            const protectedText = protectMarkup(searchString);
             var thisBlock = window.roamAlphaAPI.util.generateUID();
             await window.roamAlphaAPI.createBlock({
                 location: { "parent-uid": searchBlock, order: 1 },
@@ -139,10 +172,10 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                 if (sourceLanguage == "null") {
                     await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                 } else {
-                    await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
+                    await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                 }
             } else {
-                var raw = "{\"q\": \"" + searchString + "\"}";
+                var raw = "{\"q\": \"" + protectedText.text + "\"}";
                 var requestOptions = {
                     method: 'POST',
                     headers,
@@ -162,7 +195,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                         if (!detected) {
                             throw new Error("Detect failed: no language in response");
                         }
-                        return getTranslation(detected, thisBlock, searchString, rAPIcc, headers);
+                        return getTranslation(detected, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                     })
                     .catch(async error => {
                         await setErrorBlock(thisBlock, error?.message || "Detect failed");
@@ -183,6 +216,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                 for (var i = 0; i < parentBlockInfo[0][0].children.length; i++) {
                     var searchString = parentBlockInfo[0][0].children[i].string;
                     searchString = searchString.replace(/[\r\n]/gm, '');
+                    const protectedText = protectMarkup(searchString);
                     searchBlock = parentBlockInfo[0][0].children[i].uid;
                     var thisBlock = window.roamAlphaAPI.util.generateUID();
 
@@ -199,10 +233,10 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                                 if (sourceLanguage == "null") {
                                     await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                                 } else {
-                                    await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
+                                    await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                                 }
                             } else {
-                                var raw = "{\"q\": \"" + searchString + "\"}";
+                                var raw = "{\"q\": \"" + protectedText.text + "\"}";
                                 var requestOptions = {
                                     method: 'POST',
                                     headers,
@@ -223,7 +257,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                                             throw new Error("Detect failed: no language in response");
                                         }
                                         sourceLanguage = language;
-                                        return getTranslation(language, thisBlock, searchString, rAPIcc, headers);
+                                        return getTranslation(language, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                                     })
                                     .catch(async error => {
                                         await setErrorBlock(thisBlock, error?.message || "Detect failed");
@@ -234,7 +268,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                                 location: { "parent-uid": searchBlock, order: 1 },
                                 block: { string: "translating text...".toString(), uid: thisBlock }
                             });
-                            await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
+                            await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                         }
                     } else { // run detect on every child block
                         window.roamAlphaAPI.createBlock({
@@ -247,10 +281,10 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                             if (sourceLanguage == "null") {
                                 await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                             } else {
-                                await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
+                                await getTranslation(sourceLanguage, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                             }
                         } else {
-                            var raw = "{\"q\": \"" + searchString + "\"}";
+                            var raw = "{\"q\": \"" + protectedText.text + "\"}";
                             var requestOptions = {
                                 method: 'POST',
                                 headers,
@@ -270,7 +304,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                                     if (!detected) {
                                         throw new Error("Detect failed: no language in response");
                                     }
-                                    return getTranslation(detected, thisBlock, searchString, rAPIcc, headers);
+                                    return getTranslation(detected, thisBlock, protectedText.text, rAPIcc, headers, protectedText.map);
                                 })
                                 .catch(async error => {
                                     await setErrorBlock(thisBlock, error?.message || "Detect failed");
@@ -284,7 +318,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
     }
 }
 
-async function getTranslation(language, uid, searchString, targetLanguage, headers) {
+async function getTranslation(language, uid, searchString, targetLanguage, headers, restoreMap) {
     await window.roamAlphaAPI.updateBlock(
         { block: { uid: uid, string: "translating text from __" + language + "__", open: true } });
 
@@ -305,8 +339,9 @@ async function getTranslation(language, uid, searchString, targetLanguage, heade
         })
         .then(result => {
             if (!result.hasOwnProperty("message")) {
+                const translated = restoreMap ? restoreMarkup(result.data.translations.translatedText.toString(), restoreMap) : result.data.translations.translatedText.toString();
                 window.roamAlphaAPI.updateBlock(
-                    { block: { uid: uid, string: result.data.translations.translatedText.toString(), open: true } });
+                    { block: { uid: uid, string: translated, open: true } });
             } else {
                 alert("Too many api calls");
                 window.roamAlphaAPI.deleteBlock(
