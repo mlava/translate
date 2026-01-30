@@ -7,6 +7,7 @@ module.exports = {
             type: "module",
         }
     },
+    mode: 'production',
 	target: ['electron-renderer'],
     experiments: {
         outputModule: true,

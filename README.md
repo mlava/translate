@@ -1,21 +1,42 @@
-If you've ever wanted to translate blocks of text within your Roam Research graph, this extension makes it possible. The extension will check determine the language of the text and then translate it from that language to your preferred language (set in Roam Depot settings).
+## Translate for Roam Research
 
-**New:**
-- updated config settings to allow the extension to prompt for the source language. The API is now charging for language detection, and some users may wish to remain on the free version.
-- compatible with Roam Research Hotkeys
+Translate blocks inside your Roam graph using Deep Translate (RapidAPI). The extension detects source language (or lets you choose one) and writes the translated text into a new child block under the original.
 
-The translation will be placed in a newly created child block to the source.
-
-This video walks through the options:
-
+Video walkthrough:
 https://www.loom.com/share/2166ef87a8464af9b48deba226ed3d00
 
-You can trigger the extension by:
-- focusing in a block you want to translate, then opening Command Palette and selecting __Translate using Deep Translate (Current block)__.
-- focusing on a block that has child blocks you want to translate in bulk. Then choose either __Translate using Deep Translate (All Child blocks, Same language)__ which detects the language from the first child block and then uses that language for all subsequent child blocks.
-- Alternatively, choose __Translate using Deep Translate (All Child blocks, Multiple languages)__ which will mean that language detection runs on each child block independently and then translation occurs based on that language detection.
+### Features
+- Translate the current block or all child blocks in bulk.
+- Single-language mode to save API calls on batches.
+- Optional prompt to choose the source language.
+- Compatible with Roam Research hotkeys and command palette.
+- Built-in retry/backoff for transient API failures (429/502/503/504).
 
-You will need an API key from https://rapidapi.com/gatzuma/api/deep-translate1. This API translates over 100 languages, and allows for translation of 100,000 characters / month. It doesn't require a credit card to sign up, as it just stops working if you exceed the character count. You can pay for higher volumes if you do a lot of translating in your graph.
+### Commands
+- **Translate using Deep Translate (Current block)**
+- **Translate using Deep Translate (All Child blocks, Same language)**
+- **Translate using Deep Translate (All Child blocks, Multiple languages)**
 
-TODO:
-1. handle text containing links and any other markdown that causes translation to fail
+### Settings (Roam Depot)
+- **RapidAPI Key** 
+  - Required. Get one from https://rapidapi.com/gatzuma/api/deep-translate1
+- **Preferred Language** 
+  - Two-letter ISO 639-1 code for the target language (default: `en`)
+- **Always prompt for source language** 
+  - When enabled, detection is skipped and you enter the source language manually.
+
+### How it works
+- Current block: detect (or prompt) -> translate -> write child block.
+- Child blocks (same language): detect once on the first child, reuse for all.
+- Child blocks (multiple languages): detect per child, then translate.
+
+### Rate limits and retries
+- The Basic plan shows hard limits and ~1000 requests/hour. This extension retries only on transient failures (429/502/503/504) with short exponential backoff. Auth or quota errors (401/403) are not retried.
+
+### Privacy
+- The text you translate is sent to the RapidAPI Deep Translate endpoint. Avoid sending sensitive content if that is a concern.
+
+### Troubleshooting
+- **401/403**: check RapidAPI key, plan, and host.
+- **429**: you hit the rate limit; wait and retry.
+- **Unexpected errors**: open the console; log messages are prefixed with `[translate]`.

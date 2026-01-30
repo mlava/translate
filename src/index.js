@@ -1,5 +1,43 @@
 import iziToast from "izitoast";
-var myHeaders = new Headers();
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+const DEFAULT_RETRIES = 2;
+const DEFAULT_BASE_DELAY_MS = 500;
+
+function buildHeaders(rAPIkey) {
+    const headers = new Headers();
+    headers.set("X-RapidAPI-Key", rAPIkey);
+    headers.set("X-RapidAPI-Host", "deep-translate1.p.rapidapi.com");
+    headers.set("Content-Type", "text/plain");
+    return headers;
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDelayMs = DEFAULT_BASE_DELAY_MS } = {}) {
+    let attempt = 0;
+    while (true) {
+        try {
+            const response = await fetch(url, options);
+            if (!RETRYABLE_STATUS.has(response.status) || attempt >= retries) {
+                return response;
+            }
+            const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * baseDelayMs);
+            warn("retrying request", { url, status: response.status, attempt: attempt + 1, delayMs: delay });
+            await sleep(delay);
+            attempt += 1;
+        } catch (err) {
+            if (attempt >= retries) {
+                throw err;
+            }
+            const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * baseDelayMs);
+            warn("retrying request after network error", { url, attempt: attempt + 1, delayMs: delay });
+            await sleep(delay);
+            attempt += 1;
+        }
+    }
+}
 
 const config = {
     tabTitle: "Translate",
@@ -29,23 +67,29 @@ const config = {
 
 export default {
     onload: ({ extensionAPI }) => {
-        extensionAPI.settings.panel.create(config);
+    extensionAPI.settings.panel.create(config);
 
-        extensionAPI.ui.commandPalette.addCommand({
-            label: "Translate using Deep Translate (Current block)",
-            callback: () => getTrans({ extensionAPI }, true, false)
-        });
-        extensionAPI.ui.commandPalette.addCommand({
-            label: "Translate using Deep Translate (All Child blocks, Same language)",
-            callback: () => getTrans({ extensionAPI }, false, true)
-        });
-        extensionAPI.ui.commandPalette.addCommand({
-            label: "Translate using Deep Translate (All Child blocks, Multiple languages)",
-            callback: () => getTrans({ extensionAPI }, false, false)
-        });
-    },
-    onunload: () => {
-    }
+    extensionAPI.ui.commandPalette.addCommand({
+        label: "Translate using Deep Translate (Current block)",
+        callback: () => {
+            return getTrans({ extensionAPI }, true, false);
+        }
+    });
+    extensionAPI.ui.commandPalette.addCommand({
+        label: "Translate using Deep Translate (All Child blocks, Same language)",
+        callback: () => {
+            return getTrans({ extensionAPI }, false, true);
+        }
+    });
+    extensionAPI.ui.commandPalette.addCommand({
+        label: "Translate using Deep Translate (All Child blocks, Multiple languages)",
+        callback: () => {
+            return getTrans({ extensionAPI }, false, false);
+        }
+    });
+},
+onunload: () => {
+}
 }
 
 async function getTrans({ extensionAPI }, parentOnly, oneLang) {
@@ -71,9 +115,7 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
             promptSource = true;
         }
 
-        myHeaders.append("X-RapidAPI-Key", rAPIkey);
-        myHeaders.append("X-RapidAPI-Host", "deep-translate1.p.rapidapi.com");
-        myHeaders.append("Content-Type", "text/plain");
+        const headers = buildHeaders(rAPIkey);
 
         if (parentOnly) { // translate focused block only
             searchBlock = await window.roamAlphaAPI.ui.getFocusedBlock()?.["block-uid"];
@@ -97,23 +139,34 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                 if (sourceLanguage == "null") {
                     await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                 } else {
-                    await getTranslation(sourceLanguage, thisBlock, searchString);
+                    await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
                 }
             } else {
                 var raw = "{\"q\": \"" + searchString + "\"}";
                 var requestOptions = {
                     method: 'POST',
-                    headers: myHeaders,
+                    headers,
                     body: raw,
                     redirect: 'follow'
                 };
 
-                fetch("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
-                    .then(response => response.json())
-                    .then(result => {
-                        return getTranslation(result.data.detections[0].language, thisBlock, searchString);
+                fetchWithRetry("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`Detect failed: HTTP ${response.status}`);
+                        }
+                        return response.json();
                     })
-                    .catch(error => console.log('error', error));
+                    .then(result => {
+                        const detected = result?.data?.detections?.[0]?.language;
+                        if (!detected) {
+                            throw new Error("Detect failed: no language in response");
+                        }
+                        return getTranslation(detected, thisBlock, searchString, rAPIcc, headers);
+                    })
+                    .catch(async error => {
+                        await setErrorBlock(thisBlock, error?.message || "Detect failed");
+                    });
             }
         } else { // translate each child block
             var parentBlock = await window.roamAlphaAPI.ui.getFocusedBlock()?.["block-uid"];
@@ -146,31 +199,42 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                                 if (sourceLanguage == "null") {
                                     await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                                 } else {
-                                    await getTranslation(sourceLanguage, thisBlock, searchString);
+                                    await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
                                 }
                             } else {
                                 var raw = "{\"q\": \"" + searchString + "\"}";
                                 var requestOptions = {
                                     method: 'POST',
-                                    headers: myHeaders,
+                                    headers,
                                     body: raw,
                                     redirect: 'follow'
                                 };
 
-                                await fetch("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
-                                    .then(response => response.json())
-                                    .then(result => {
-                                        language = result.data.detections[0].language;
-                                        return getTranslation(language, thisBlock, searchString);
+                                await fetchWithRetry("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
+                                    .then(response => {
+                                        if (!response.ok) {
+                                            throw new Error(`Detect failed: HTTP ${response.status}`);
+                                        }
+                                        return response.json();
                                     })
-                                    .catch(error => console.log('error', error));
+                                    .then(result => {
+                                        language = result?.data?.detections?.[0]?.language;
+                                        if (!language) {
+                                            throw new Error("Detect failed: no language in response");
+                                        }
+                                        sourceLanguage = language;
+                                        return getTranslation(language, thisBlock, searchString, rAPIcc, headers);
+                                    })
+                                    .catch(async error => {
+                                        await setErrorBlock(thisBlock, error?.message || "Detect failed");
+                                    });
                             }
                         } else {
                             await window.roamAlphaAPI.createBlock({
                                 location: { "parent-uid": searchBlock, order: 1 },
                                 block: { string: "translating text...".toString(), uid: thisBlock }
                             });
-                            await getTranslation(sourceLanguage, thisBlock, searchString);
+                            await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
                         }
                     } else { // run detect on every child block
                         window.roamAlphaAPI.createBlock({
@@ -183,45 +247,62 @@ async function getTrans({ extensionAPI }, parentOnly, oneLang) {
                             if (sourceLanguage == "null") {
                                 await window.roamAlphaAPI.deleteBlock({ block: { uid: thisBlock } });
                             } else {
-                                await getTranslation(sourceLanguage, thisBlock, searchString);
+                                await getTranslation(sourceLanguage, thisBlock, searchString, rAPIcc, headers);
                             }
                         } else {
                             var raw = "{\"q\": \"" + searchString + "\"}";
                             var requestOptions = {
                                 method: 'POST',
-                                headers: myHeaders,
+                                headers,
                                 body: raw,
                                 redirect: 'follow'
                             };
 
-                            await fetch("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
-                                .then(response => response.json())
-                                .then(result => {
-                                    return getTranslation(result.data.detections[0].language, thisBlock, searchString);
+                            await fetchWithRetry("https://deep-translate1.p.rapidapi.com/language/translate/v2/detect", requestOptions)
+                                .then(response => {
+                                    if (!response.ok) {
+                                        throw new Error(`Detect failed: HTTP ${response.status}`);
+                                    }
+                                    return response.json();
                                 })
-                                .catch(error => console.log('error', error));
+                                .then(result => {
+                                    const detected = result?.data?.detections?.[0]?.language;
+                                    if (!detected) {
+                                        throw new Error("Detect failed: no language in response");
+                                    }
+                                    return getTranslation(detected, thisBlock, searchString, rAPIcc, headers);
+                                })
+                                .catch(async error => {
+                                    await setErrorBlock(thisBlock, error?.message || "Detect failed");
+                                });
                         }
                     }
                 }
+            } else {
             }
         }
     }
 }
 
-async function getTranslation(language, uid, searchString) {
+async function getTranslation(language, uid, searchString, targetLanguage, headers) {
     await window.roamAlphaAPI.updateBlock(
         { block: { uid: uid, string: "translating text from __" + language + "__", open: true } });
 
-    var rawText = "{\"q\": \"" + searchString + "\", \"source\":\"" + language + "\",\"target\":\"en\"}";
+    var rawText = "{\"q\": \"" + searchString + "\", \"source\":\"" + language + "\",\"target\":\"" + targetLanguage + "\"}";
     var requestOptions1 = {
         method: 'POST',
-        headers: myHeaders,
+        headers,
         body: rawText,
         redirect: 'follow'
     };
 
-    await fetch("https://deep-translate1.p.rapidapi.com/language/translate/v2", requestOptions1)
-        .then(response => response.json())
+    await fetchWithRetry("https://deep-translate1.p.rapidapi.com/language/translate/v2", requestOptions1)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`Translate failed: HTTP ${response.status}`);
+            }
+            return response.json();
+        })
         .then(result => {
             if (!result.hasOwnProperty("message")) {
                 window.roamAlphaAPI.updateBlock(
@@ -232,7 +313,9 @@ async function getTranslation(language, uid, searchString) {
                     { block: { uid: uid } });
             }
         })
-        .catch(error => console.log('error', error));
+        .catch(async error => {
+            await setErrorBlock(uid, error?.message || "Translate failed");
+        });
 }
 
 async function prompt() {
@@ -299,4 +382,13 @@ async function sortObjectsByOrder(o) {
     return o.sort(function (a, b) {
         return a.order - b.order;
     });
+}
+
+async function setErrorBlock(uid, message) {
+    try {
+        await window.roamAlphaAPI.updateBlock({
+            block: { uid, string: `error: ${message}`, open: true }
+        });
+    } catch (e) {
+    }
 }
