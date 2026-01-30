@@ -56,7 +56,7 @@ async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDel
                 return response;
             }
             const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * baseDelayMs);
-            warn("retrying request", { url, status: response.status, attempt: attempt + 1, delayMs: delay });
+            console.info("retrying request", { url, status: response.status, attempt: attempt + 1, delayMs: delay });
             await sleep(delay);
             attempt += 1;
         } catch (err) {
@@ -64,7 +64,7 @@ async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDel
                 throw err;
             }
             const delay = baseDelayMs * Math.pow(2, attempt) + Math.floor(Math.random() * baseDelayMs);
-            warn("retrying request after network error", { url, attempt: attempt + 1, delayMs: delay });
+            console.info("retrying request after network error", { url, attempt: attempt + 1, delayMs: delay });
             await sleep(delay);
             attempt += 1;
         }
