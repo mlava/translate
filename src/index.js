@@ -71,6 +71,194 @@ async function fetchWithRetry(url, options, { retries = DEFAULT_RETRIES, baseDel
     }
 }
 
+async function detectLanguage(text, headers) {
+    const response = await fetchWithRetry(
+        "https://deep-translate1.p.rapidapi.com/language/translate/v2/detect",
+        { method: "POST", headers, body: JSON.stringify({ q: text }), redirect: "follow" }
+    );
+    if (!response.ok) throw new Error(`Detect failed: HTTP ${response.status}`);
+    const result = await response.json();
+    const detected = result?.data?.detections?.[0]?.language;
+    if (!detected) throw new Error("Detect failed: no language in response");
+    return detected;
+}
+
+async function translateRaw(text, sourceLanguage, targetLanguage, headers) {
+    const response = await fetchWithRetry(
+        "https://deep-translate1.p.rapidapi.com/language/translate/v2",
+        { method: "POST", headers, body: JSON.stringify({ q: text, source: sourceLanguage, target: targetLanguage }), redirect: "follow" }
+    );
+    if (!response.ok) throw new Error(`Translate failed: HTTP ${response.status}`);
+    const result = await response.json();
+    if (result.hasOwnProperty("message")) throw new Error("Too many API calls");
+    return result.data.translations.translatedText.toString();
+}
+
+const EXTENSION_TOOLS_ID = "translate";
+
+function registerExtensionTools(extensionAPI) {
+    if (typeof window === "undefined") return;
+    const registry = (window.RoamExtensionTools = window.RoamExtensionTools || {});
+
+    function getConfig() {
+        const rAPIkey = extensionAPI.settings.get("dt-rAPI-key");
+        if (!rAPIkey) return { error: "RapidAPI key not configured. Set it in Translate extension settings." };
+        const targetLanguage = extensionAPI.settings.get("dt-lang") || "en";
+        const headers = buildHeaders(rAPIkey);
+        return { rAPIkey, targetLanguage, headers };
+    }
+
+    function getBlockString(uid) {
+        const data = window.roamAlphaAPI?.data?.pull
+            ? window.roamAlphaAPI.data.pull("[:block/string]", [":block/uid", uid])
+            : null;
+        if (!data) return null;
+        return data[":block/string"] || "";
+    }
+
+    registry[EXTENSION_TOOLS_ID] = {
+        name: "Translate",
+        version: "1.0",
+        tools: [
+            {
+                name: "dt_translate_block",
+                description: "Translate a Roam block's text to a target language. Creates a child block with the translated text.",
+                readOnly: false,
+                parameters: {
+                    type: "object",
+                    properties: {
+                        block_uid: { type: "string", description: "UID of the block to translate." },
+                        target_language: { type: "string", description: "Two-letter ISO 639-1 target language code (e.g. 'en', 'es', 'fr'). Defaults to the extension's configured preferred language." },
+                        source_language: { type: "string", description: "Two-letter ISO 639-1 source language code. If omitted, auto-detected." },
+                    },
+                    required: ["block_uid"],
+                },
+                execute: async (args = {}) => {
+                    try {
+                        const cfg = getConfig();
+                        if (cfg.error) return { error: cfg.error };
+                        const { headers } = cfg;
+                        const target = args.target_language || cfg.targetLanguage;
+                        const blockStr = getBlockString(args.block_uid);
+                        if (blockStr === null) return { error: `Block not found: ${args.block_uid}` };
+                        if (!blockStr.trim()) return { error: "Block is empty — nothing to translate." };
+
+                        const searchString = blockStr.replace(/[\r\n]/gm, "");
+                        const prot = protectMarkup(searchString);
+                        const source = args.source_language || await detectLanguage(prot.text, headers);
+                        const translated = await translateRaw(prot.text, source, target, headers);
+                        const restored = restoreMarkup(translated, prot.map);
+
+                        const childUid = window.roamAlphaAPI.util.generateUID();
+                        await window.roamAlphaAPI.createBlock({
+                            location: { "parent-uid": args.block_uid, order: "last" },
+                            block: { string: restored, uid: childUid },
+                        });
+                        return { success: true, block_uid: childUid, source_language: source, target_language: target, translated_text: restored };
+                    } catch (err) {
+                        return { error: err.message || "Translation failed" };
+                    }
+                },
+            },
+            {
+                name: "dt_translate_children",
+                description: "Translate all child blocks of a parent block. Creates a child block under each with the translated text.",
+                readOnly: false,
+                parameters: {
+                    type: "object",
+                    properties: {
+                        parent_uid: { type: "string", description: "UID of the parent block whose children will be translated." },
+                        target_language: { type: "string", description: "Two-letter ISO 639-1 target language code. Defaults to the extension's configured preferred language." },
+                        source_language: { type: "string", description: "Two-letter ISO 639-1 source language code. If omitted, auto-detected from the first child." },
+                        detect_each: { type: "boolean", description: "If true, detect the source language individually for each child block. Default false." },
+                    },
+                    required: ["parent_uid"],
+                },
+                execute: async (args = {}) => {
+                    try {
+                        const cfg = getConfig();
+                        if (cfg.error) return { error: cfg.error };
+                        const { headers } = cfg;
+                        const target = args.target_language || cfg.targetLanguage;
+
+                        const q = `[:find (pull ?page [:block/string :block/uid :block/order {:block/children ...}]) :where [?page :block/uid "${args.parent_uid}"]]`;
+                        const info = await window.roamAlphaAPI.q(q);
+                        const children = info?.[0]?.[0]?.children;
+                        if (!children || children.length === 0) return { error: "No child blocks found." };
+
+                        children.sort((a, b) => a.order - b.order);
+                        const results = [];
+                        let sharedSource = args.source_language || null;
+
+                        for (let i = 0; i < children.length; i++) {
+                            const child = children[i];
+                            const raw = (child.string || "").replace(/[\r\n]/gm, "");
+                            if (!raw.trim()) { results.push({ block_uid: child.uid, skipped: true, reason: "empty" }); continue; }
+
+                            const prot = protectMarkup(raw);
+                            let source;
+                            if (args.detect_each || (!sharedSource && i === 0)) {
+                                source = await detectLanguage(prot.text, headers);
+                                if (!args.detect_each) sharedSource = source;
+                            } else {
+                                source = sharedSource;
+                            }
+
+                            const translated = await translateRaw(prot.text, source, target, headers);
+                            const restored = restoreMarkup(translated, prot.map);
+                            const childUid = window.roamAlphaAPI.util.generateUID();
+                            await window.roamAlphaAPI.createBlock({
+                                location: { "parent-uid": child.uid, order: "last" },
+                                block: { string: restored, uid: childUid },
+                            });
+                            results.push({ block_uid: childUid, source_language: source, translated_text: restored });
+                        }
+                        return { success: true, target_language: target, results };
+                    } catch (err) {
+                        return { error: err.message || "Translation failed" };
+                    }
+                },
+            },
+            {
+                name: "dt_translate_text",
+                description: "Translate raw text and return the result without modifying any blocks. Useful for understanding foreign text without side effects.",
+                readOnly: true,
+                parameters: {
+                    type: "object",
+                    properties: {
+                        text: { type: "string", description: "The text to translate." },
+                        target_language: { type: "string", description: "Two-letter ISO 639-1 target language code. Defaults to the extension's configured preferred language." },
+                        source_language: { type: "string", description: "Two-letter ISO 639-1 source language code. If omitted, auto-detected." },
+                    },
+                    required: ["text"],
+                },
+                execute: async (args = {}) => {
+                    try {
+                        const cfg = getConfig();
+                        if (cfg.error) return { error: cfg.error };
+                        const { headers } = cfg;
+                        const target = args.target_language || cfg.targetLanguage;
+
+                        const prot = protectMarkup(args.text);
+                        const source = args.source_language || await detectLanguage(prot.text, headers);
+                        const translated = await translateRaw(prot.text, source, target, headers);
+                        const restored = restoreMarkup(translated, prot.map);
+                        return { success: true, source_language: source, target_language: target, translated_text: restored };
+                    } catch (err) {
+                        return { error: err.message || "Translation failed" };
+                    }
+                },
+            },
+        ],
+    };
+}
+
+function unregisterExtensionTools() {
+    if (typeof window !== "undefined" && window.RoamExtensionTools) {
+        delete window.RoamExtensionTools[EXTENSION_TOOLS_ID];
+    }
+}
+
 const config = {
     tabTitle: "Translate",
     settings: [
@@ -100,6 +288,7 @@ const config = {
 export default {
     onload: ({ extensionAPI }) => {
     extensionAPI.settings.panel.create(config);
+    registerExtensionTools(extensionAPI);
 
     extensionAPI.ui.commandPalette.addCommand({
         label: "Translate using Deep Translate (Current block)",
@@ -121,6 +310,7 @@ export default {
     });
 },
 onunload: () => {
+    unregisterExtensionTools();
 }
 }
 
